@@ -620,7 +620,7 @@ end
 local function clearInventory(player)
 	if player.character then
 		for i = 1, player.character.request_slot_count do
-			player.character.clear_request_slot(i)
+			player.set_personal_logistic_slot(i, {name = nil, min = 0,  max = 0})
 		end
 	end
 
@@ -866,27 +866,36 @@ local function serialize_requests(player)
 	end
 
 	local requests = {}
-	if player.character.request_slot_count then
-		for i = 1, player.character.request_slot_count do
-			requests[i] = player.character.get_request_slot(i)
-		end
+	local slots = {}
+	requests["size"] = player.character.character_logistic_slot_count
+	for i = 1, player.character.character_logistic_slot_count do
+		slots[i] = player.character.get_personal_logistic_slot(i)
 	end
+	requests["slots"] = slots
 
 	return requests
 end
 
 local function deserialize_requests(player, requests)
-	if not player.character then
-		return
-	end
-
-	local next = next
-	for i = 1, player.character.request_slot_count do
-		if requests[i] and (next(requests[i]) ~= nil) then
-			player.character.set_request_slot(requests[i], i)
-		else
-			player.character.clear_request_slot(i)
+	local status, err = pcall(function()
+		if not player.character then
+			return
 		end
+		log("Loading requests for: " .. player.name)
+		local slots = requests["slots"]
+		player.character.character_logistic_slot_count = requests["size"]
+		for i = 1, player.character.character_logistic_slot_count do
+			local request = slots[i]
+			if request then
+				if request.name ~= nil then
+					player.set_personal_logistic_slot(i, request)
+				end
+			end
+		end
+	end)
+	if err then
+		player.print("An error occurred whilst deserializing request: ")
+		log(err)
 	end
 end
 
@@ -1146,8 +1155,6 @@ remote.add_interface("playerManager", {
 			deserialize_quickbar(player, quickbarTable or {})
 
 			deserialize_requests(player, requestsTable or {})
-
-			deserialize_trashfilters(player, trashTable or {})
 
 			player.print("Inventory synchronized.")
 			global.inventorySynced[player.name] = true
