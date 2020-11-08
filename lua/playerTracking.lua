@@ -651,6 +651,10 @@ end
 local function deserialize_grid(grid, data)
 	grid.clear()
 	local names, energy, shield, xs, ys = data.names, data.energy, data.shield, data.xs, data.ys
+	local inv = nil
+	if data.inv then
+		inv = data.inv
+	end
 	for i = 1, #names do
 		local equipment = grid.put({
 			name = names[i],
@@ -664,11 +668,20 @@ local function deserialize_grid(grid, data)
 			if energy[i] > 0 then
 				equipment.energy = energy[i]
 			end
+			if inv then
+				if equipment.burner then
+					for _,insert in pairs(inv[i]) do
+						if equipment.burner.inventory.can_insert(insert) then
+							equipment.burner.inventory.insert(insert)
+						end
+					end
+				end
+			end
 		end
 	end
 end
 
-local function deserialize_inventory(inventory, data)
+local function deserialize_inventory(player, inventory, data)
 	local item_names = data.item_names or {}
 	local item_counts = data.item_counts or {}
 	local item_durabilities = data.item_durabilities or {}
@@ -677,29 +690,37 @@ local function deserialize_inventory(inventory, data)
 	local item_labels = data.item_labels or {}
 	local item_grids = data.item_grids or {}
 	for idx, name in pairs(item_names) do
-		local slot = inventory[idx]
-		slot.set_stack({
-			name = name,
-			count = item_counts[idx]
-		})
-		if item_durabilities[idx] ~= nil then
-			slot.durability = item_durabilities[idx]
-		end
-		if item_ammos[idx] ~= nil then
-			slot.ammo = item_ammos[idx]
-		end
-		local label = item_labels[idx]
-		-- We got a crash on line 1 of this IF statement with AAI programmable vehicles's unit-remote-control item where label = {allow_manual_label_change = true}
-		-- we attempt to fix this by checking slot.is_item_with_label, but we have no idea if this property is set properly. Label syncing might be broken.
-		if label and slot.is_item_with_label then
-			slot.label = label.label
-			slot.label_color = label.label_color
-			slot.allow_manual_label_change = label.allow_manual_label_change
-		end
+		local status, err = pcall(function()
+			local slot = inventory[idx]
+			slot.set_stack({
+				name = name,
+				count = item_counts[idx]
+			})
+			if item_durabilities[idx] ~= nil then
+				slot.durability = item_durabilities[idx]
+			end
+			if item_ammos[idx] ~= nil then
+				slot.ammo = item_ammos[idx]
+			end
+			local label = item_labels[idx]
+			-- We got a crash on line 1 of this IF statement with AAI programmable vehicles's unit-remote-control item where label = {allow_manual_label_change = true}
+			-- we attempt to fix this by checking slot.is_item_with_label, but we have no idea if this property is set properly. Label syncing might be broken.
+			if label and slot.is_item_with_label then
+				slot.label = label.label
+				slot.label_color = label.label_color
+				slot.allow_manual_label_change = label.allow_manual_label_change
+			end
 
-		local grid = item_grids[idx]
-		if grid then
-			deserialize_grid(slot.grid, grid)
+			local grid = item_grids[idx]
+			if grid then
+				if slot.grid then
+					deserialize_grid(slot.grid, grid)
+				end
+			end
+		end)
+		if err then
+			player.print("An error occurred whilst deserializing item: " .. name)
+			log(err)
 		end
 	end
 	for idx, str in pairs(item_exports) do
@@ -732,7 +753,7 @@ do
 	table.sort(inventory_types)
 end
 local function serialize_equipment_grid(grid)
-	local names, energy, shield, xs, ys = {}, {}, {}, {}, {}
+	local names, energy, shield, xs, ys, inv = {}, {}, {}, {}, {}
 
 	local position = {0,0}
 	local width, height = grid.width, grid.height
@@ -757,6 +778,16 @@ local function serialize_equipment_grid(grid)
 					shield[idx] = equipment.shield
 					xs[idx] = x
 					ys[idx] = y
+
+					if equipment.burner then
+						local tmparr = {}
+						for itm, amt in pairs(equipment.burner.inventory.get_contents()) do
+							tmparr[#tmparr+1] = {name=itm, count=amt}
+						end
+						inv[idx] = tmparr
+					else
+						inv[idx] = ""
+					end
 				end
 			end
 		end
@@ -767,6 +798,7 @@ local function serialize_equipment_grid(grid)
 		shield = shield,
 		xs = xs,
 		ys = ys,
+		inv = inv,
 	}
 end
 --[[ serialize an inventory ]]
@@ -787,11 +819,11 @@ local function serialize_inventory(inventory)
 		if slot.valid_for_read then
 			if slot.is_blueprint or slot.is_blueprint_book or slot.is_upgrade_item
 					or slot.is_deconstruction_item or slot.is_item_with_tags then
-				local success, export = pcall(slot.export_stack)
-				if not success then
-					-- print("failed to export item")
-				else
-					item_exports[i] = export
+				if not (slot.is_blueprint or slot.is_blueprint_book) then
+					local success, export = pcall(slot.export_stack)
+					if success then
+						item_exports[i] = export
+					end
 				end
 			elseif slot.is_item_with_inventory then
 				-- print("sending items with inventory is not allowed")
@@ -853,7 +885,9 @@ end
 local function deserialize_quickbar(player, quickbar)
 	for index, name in ipairs(quickbar) do
 		if name ~= "" then
-			player.set_quick_bar_slot(index, name)
+			if (game.entity_prototypes[name] or game.item_prototypes[name]) then
+				player.set_quick_bar_slot(index, name)
+			end
 		else
 			player.set_quick_bar_slot(index, nil)
 		end
@@ -998,7 +1032,7 @@ local function defaultSyncConditionCheck(event)
 			player.print("Preparing profile sync...")
 	end
 
-	createPermissionGroupsLocal()
+	--createPermissionGroupsLocal()
 
 	global.inventorySyncEnabled = true
 end
@@ -1083,11 +1117,11 @@ remote.remove_interface("playerManager")
 remote.add_interface("playerManager", {
 	enableInventorySync = function()
 		global.inventorySyncEnabled = true
-		createPermissionGroupsLocal()
+		--createPermissionGroupsLocal()
 	end,
 	disableInventorySync = function()
 		global.inventorySyncEnabled = false
-		createPermissionGroupsLocal()
+		--createPermissionGroupsLocal()
 	end,
 	runCode = function(code)
 		load(code, "playerTracking code injection failed!", "t", _ENV)()
@@ -1139,15 +1173,15 @@ remote.add_interface("playerManager", {
 				clearInventory(player)
 
 				-- 3: pistol.
-				deserialize_inventory(player.get_inventory(defines.inventory.character_guns), invTable[3] or {})
+				deserialize_inventory(player, player.get_inventory(defines.inventory.character_guns), invTable[3] or {})
 				-- 4: Ammo.
-				deserialize_inventory(player.get_inventory(defines.inventory.character_ammo), invTable[4] or {})
+				deserialize_inventory(player, player.get_inventory(defines.inventory.character_ammo), invTable[4] or {})
 				-- 5: armor.
-				deserialize_inventory(player.get_inventory(defines.inventory.character_armor), invTable[5] or {})
+				deserialize_inventory(player, player.get_inventory(defines.inventory.character_armor), invTable[5] or {})
 				-- 8: express-transport-belt (trash slots)
-				deserialize_inventory(player.get_inventory(defines.inventory.character_trash), invTable[8] or {})
+				deserialize_inventory(player, player.get_inventory(defines.inventory.character_trash), invTable[8] or {})
 				-- 1: Main inventory (do that AFTER armor, otherwise there won't be space)
-				deserialize_inventory(player.get_inventory(defines.inventory.character_main), invTable[1] or {})
+				deserialize_inventory(player, player.get_inventory(defines.inventory.character_main), invTable[1] or {})
 			else
 				player.print("Your inventory was lost due to an error")
 			end
@@ -1182,11 +1216,11 @@ remote.add_interface("playerManager", {
 		-- end
 	end,
 	setPlayerPermissionGroup = function(playerName, permissionGroupName)
-		setPlayerPermissionGroupLocal(playerName, permissionGroupName)
+		--setPlayerPermissionGroupLocal(playerName, permissionGroupName)
 	end,
 	-- Creates permission group definitions.
-	createPermissionGroups = function()		
-		createPermissionGroupsLocal();
+	createPermissionGroups = function()
+		--createPermissionGroupsLocal();
 	end,
 	batchWhitelist = function(whitelistJson)
 		local whitelist = game.json_to_table(whitelistJson)
