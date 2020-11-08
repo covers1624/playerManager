@@ -753,7 +753,7 @@ do
 	table.sort(inventory_types)
 end
 local function serialize_equipment_grid(grid)
-	local names, energy, shield, xs, ys, inv = {}, {}, {}, {}, {}
+	local names, energy, shield, xs, ys, inv = {}, {}, {}, {}, {}, {}
 
 	local position = {0,0}
 	local width, height = grid.width, grid.height
