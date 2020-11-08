@@ -118,7 +118,7 @@ module.exports = class remoteCommands {
 	}
 	async factorioOutput(data){
 		try{ // these filters might not be good enough. Investigate whether it is possible for a non-admin user to write things that still goes through.
-		this.messageInterface(data)
+		// this.messageInterface(data)
 		if(data.includes("[BAN]")
 		&& data.includes("was banned by")
 		&& !data.includes("[CHAT]")
